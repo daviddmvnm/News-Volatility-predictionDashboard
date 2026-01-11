@@ -2,7 +2,7 @@
 
 Interactive dashboard exploring how news sentiment predicts extreme market volatility.
 
-**[Live Demo](https://your-app.streamlit.app)**
+**[Live Demo](https://news-volatility-predictiondashboard-zs3egth3qvtkrfzp5cmczj.streamlit.app/)**
 
 ## What This Does
 
@@ -52,5 +52,5 @@ News sensitivity varies by sector. Event-driven sectors benefit most; stable reg
 
 ## Links
 
-- [Full Project Report](link-to-pdf)
-- [Project Data](link-to-google-drive)
+- [Full Project Report](https://docs.google.com/document/d/1d13AOZHMbSHORa-LI81_pXSDOy3eiwBfxVOXyzW3Y7w/edit?tab=t.cujvg6q004tp#heading=h.9hqcxrglxo85)
+- [Project Data](https://drive.google.com/drive/folders/1FFkeFcLwR7XuvW-mU_Um4EJlmSUq3AQr?usp=drive_link)
