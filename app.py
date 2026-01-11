@@ -1,16 +1,11 @@
 """
 News & Volatility Dashboard
-============================
-Interactive dashboard exploring how news sentiment predicts market volatility.
-
-Based on the BEE3066 Term Project: Information Arrival and Volatility Structures
 """
 
 import streamlit as st
 import pandas as pd
 import numpy as np
 import yfinance as yf
-import plotly.express as px
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 from sklearn.linear_model import LogisticRegression
@@ -19,46 +14,174 @@ from sklearn.model_selection import TimeSeriesSplit
 from sklearn.metrics import accuracy_score, f1_score
 from sklearn.preprocessing import StandardScaler
 from dataclasses import dataclass
-from pathlib import Path
-from typing import Dict, Any
+from typing import Dict
 
 # ============================================================================
-# CONFIGURATION
+# CONFIG
 # ============================================================================
 
 TRADING_DAYS = 252
 WINDOW = 5
 
-# Page config
+BG = "#0f1117"
+SURFACE = "#1a1d24"
+ACCENT = "#00d4aa"
+MUTED = "#6b7280"
+TEXT = "#e5e7eb"
+RED = "#ef4444"
+
 st.set_page_config(
-    page_title="News & Volatility Dashboard",
-    page_icon="📈",
+    page_title="vol × news",
+    page_icon="◉",
     layout="wide",
-    initial_sidebar_state="expanded"
+    initial_sidebar_state="collapsed"
 )
 
-# Custom CSS for cleaner look
-st.markdown("""
+st.markdown(f"""
 <style>
-    .block-container {
-        padding-top: 2rem;
-        padding-bottom: 2rem;
-    }
-    h1 {
-        color: #1f77b4;
-    }
-    .metric-card {
-        background-color: #f0f2f6;
-        border-radius: 10px;
-        padding: 1rem;
+    .stApp {{
+        background-color: {BG};
+        color: {TEXT};
+    }}
+    
+    .stMarkdown, .stText, p, span, label {{
+        color: {TEXT} !important;
+        font-family: 'IBM Plex Mono', monospace;
+    }}
+    
+    h1 {{
+        color: {TEXT} !important;
+        font-size: 1.5rem !important;
+        font-weight: 400 !important;
+        letter-spacing: 0.05em;
+        margin-bottom: 2rem !important;
+    }}
+    
+    h2, h3 {{
+        color: {MUTED} !important;
+        font-size: 0.85rem !important;
+        font-weight: 400 !important;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+    }}
+    
+    .block-container {{
+        padding: 3rem 4rem !important;
+        max-width: 1400px;
+    }}
+    
+    .stTextInput > div > div > input {{
+        background-color: {SURFACE} !important;
+        color: {TEXT} !important;
+        border: 1px solid #2d3139 !important;
+        border-radius: 4px;
+        font-family: 'IBM Plex Mono', monospace;
+    }}
+    
+    .stTextInput > div > div > input:focus {{
+        border-color: {ACCENT} !important;
+        box-shadow: none !important;
+    }}
+    
+    .stButton > button {{
+        background-color: {SURFACE} !important;
+        color: {TEXT} !important;
+        border: 1px solid #2d3139 !important;
+        border-radius: 4px;
+        font-family: 'IBM Plex Mono', monospace;
+        font-size: 0.8rem;
+        padding: 0.5rem 1.5rem;
+        transition: border-color 0.2s;
+    }}
+    
+    .stButton > button:hover {{
+        border-color: {ACCENT} !important;
+        color: {ACCENT} !important;
+    }}
+    
+    .stSelectSlider > div {{
+        background-color: transparent !important;
+    }}
+    
+    .stTabs [data-baseweb="tab-list"] {{
+        gap: 2rem;
+        background-color: transparent;
+        border-bottom: 1px solid #2d3139;
+    }}
+    
+    .stTabs [data-baseweb="tab"] {{
+        background-color: transparent;
+        color: {MUTED};
+        font-size: 0.75rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        padding: 0.5rem 0;
+    }}
+    
+    .stTabs [aria-selected="true"] {{
+        color: {ACCENT} !important;
+        border-bottom: 1px solid {ACCENT};
+    }}
+    
+    .stExpander {{
+        background-color: {SURFACE};
+        border: 1px solid #2d3139;
+        border-radius: 4px;
+    }}
+    
+    .stExpander p {{
+        font-size: 0.8rem !important;
+        color: {MUTED} !important;
+    }}
+    
+    .stAlert {{
+        background-color: {SURFACE} !important;
+        border: none !important;
+    }}
+    
+    hr {{
+        border-color: #2d3139 !important;
+        opacity: 0.3;
+    }}
+    
+    .metric-box {{
+        background-color: {SURFACE};
+        border: 1px solid #2d3139;
+        border-radius: 4px;
+        padding: 1.5rem;
         margin: 0.5rem 0;
-    }
-    .stMetric {
-        background-color: #f8f9fa;
-        padding: 1rem;
-        border-radius: 8px;
-    }
+    }}
+    
+    .metric-label {{
+        color: {MUTED};
+        font-size: 0.7rem;
+        text-transform: uppercase;
+        letter-spacing: 0.1em;
+        margin-bottom: 0.5rem;
+    }}
+    
+    .metric-value {{
+        color: {ACCENT};
+        font-size: 1.8rem;
+        font-weight: 300;
+        font-family: 'IBM Plex Mono', monospace;
+    }}
+    
+    .metric-delta {{
+        color: {MUTED};
+        font-size: 0.75rem;
+        margin-top: 0.25rem;
+    }}
+    
+    div[data-testid="stDataFrame"] {{
+        background-color: {SURFACE};
+    }}
+    
+    .stSpinner > div {{
+        border-color: {ACCENT} !important;
+    }}
 </style>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@300;400;500&display=swap" rel="stylesheet">
 """, unsafe_allow_html=True)
 
 
@@ -68,7 +191,6 @@ st.markdown("""
 
 @dataclass
 class ResidualModelResult:
-    """Container for all model outputs."""
     ticker: str
     best_alpha: float
     metrics: Dict[str, Dict[str, float]]
@@ -79,12 +201,11 @@ class ResidualModelResult:
 
 
 # ============================================================================
-# DATA LOADING & PROCESSING
+# DATA
 # ============================================================================
 
 @st.cache_data
 def load_news_features() -> pd.DataFrame:
-    """Load pre-computed daily news features."""
     df = pd.read_csv("daily_features.csv")
     df["date_key"] = pd.to_datetime(df["date_key"])
     
@@ -97,9 +218,7 @@ def load_news_features() -> pd.DataFrame:
         + [f"{t}_uncertainty_ratio" for t in themes]
     )
     
-    # Only keep columns that exist
     cols = [c for c in cols if c in df.columns]
-    
     df = df[cols].sort_values("date_key").reset_index(drop=True)
     df["is_covid"] = df["date_key"].between("2020-03-01", "2020-12-31").astype(int)
     
@@ -107,11 +226,10 @@ def load_news_features() -> pd.DataFrame:
 
 
 def load_market_data(ticker: str, start_date, end_date) -> pd.DataFrame:
-    """Pull market data from yfinance."""
     df = yf.download(ticker, start=start_date, end=end_date, interval="1d", progress=False)
     
     if df.empty:
-        raise ValueError(f"No data found for ticker: {ticker}")
+        raise ValueError(f"No data for {ticker}")
     
     if isinstance(df.columns, pd.MultiIndex):
         df.columns = [c[0] for c in df.columns]
@@ -126,7 +244,6 @@ def load_market_data(ticker: str, start_date, end_date) -> pd.DataFrame:
 
 
 def add_market_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Add returns and volatility features."""
     df = df.copy()
     df["ret"] = df["Close"].pct_change()
     df["vol"] = df["ret"].rolling(WINDOW).std() * np.sqrt(TRADING_DAYS)
@@ -135,7 +252,6 @@ def add_market_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def merge_news_market(news: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
-    """Merge news features with market data."""
     df = (
         market.merge(news, on="date_key", how="left")
               .sort_values("date_key")
@@ -147,7 +263,6 @@ def merge_news_market(news: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_lags(df: pd.DataFrame) -> pd.DataFrame:
-    """Add lagged features for time series modelling."""
     df = df.copy()
     
     base_cols = ["ret", "vol", "log_vol"]
@@ -162,7 +277,6 @@ def add_lags(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def add_rv_targets(df: pd.DataFrame) -> pd.DataFrame:
-    """Add realised volatility target."""
     df = df.copy()
     df["ret_abs"] = df["ret"].abs()
     df["rv1"] = df["ret_abs"].shift(-1)
@@ -170,10 +284,8 @@ def add_rv_targets(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def engineer_interactions(df: pd.DataFrame) -> pd.DataFrame:
-    """Engineer interaction features based on EDA findings."""
     df = df.copy()
     
-    # Primary burst: max intensity * max activity
     primary_intensity_cols = ["markets_sentiment_intensity", "macro_sentiment_intensity"]
     primary_activity_cols = ["markets_activity_share", "macro_activity_share"]
     
@@ -185,7 +297,6 @@ def engineer_interactions(df: pd.DataFrame) -> pd.DataFrame:
         activity = df[existing_activity].max(axis=1)
         df["primary_burst"] = primary * activity
         
-        # U-shape regime based on quantiles
         q_low, q_high = primary.quantile([0.2, 0.8])
         df["u_shape_regime"] = np.select(
             [primary < q_low, primary > q_high],
@@ -196,7 +307,6 @@ def engineer_interactions(df: pd.DataFrame) -> pd.DataFrame:
         df["primary_burst"] = 0
         df["u_shape_regime"] = 1
     
-    # Dominance burst (if available)
     dominance_cols = ["geopol_sentiment_intensity", "trade_sentiment_intensity"]
     existing_dom = [c for c in dominance_cols if c in df.columns]
     
@@ -209,7 +319,6 @@ def engineer_interactions(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def build_dataset(ticker: str, news: pd.DataFrame) -> pd.DataFrame:
-    """Full pipeline: load market data, merge with news, engineer features."""
     market = load_market_data(ticker, news["date_key"].min(), news["date_key"].max())
     market = add_market_features(market)
     
@@ -231,14 +340,9 @@ def run_residual_model(
     q_extreme: float = 0.9,
     alpha_grid: np.ndarray = np.linspace(0, 1, 21)
 ) -> ResidualModelResult:
-    """
-    Fully purged walk-forward residual model.
-    Returns a rich, inspectable result object.
-    """
     
     df = df_final.copy()
     
-    # ---------- TARGET ----------
     df["ret_abs"] = df["ret"].abs()
     df["rv1_target"] = df["ret_abs"].shift(-1)
     df = df.dropna(subset=["rv1_target"]).reset_index(drop=True)
@@ -249,7 +353,6 @@ def run_residual_model(
     
     df["rv1_extreme"] = expanding_binary_extreme(df["rv1_target"], q_extreme)
     
-    # ---------- FEATURES ----------
     market_only = [
         "vol", "vol_lag1", "vol_lag3",
         "ret", "ret_lag1", "ret_lag3"
@@ -277,7 +380,6 @@ def run_residual_model(
     y_tr = df.iloc[:cut]["rv1_extreme"].values
     y_te = df.iloc[cut:]["rv1_extreme"].values
     
-    # ---------- OOF BASELINE ----------
     tscv = TimeSeriesSplit(n_splits=5)
     oof_baseline = np.zeros(len(y_tr))
     
@@ -294,8 +396,10 @@ def run_residual_model(
         oof_baseline[va_idx] = lr.predict_proba(X_va)[:, 1]
     
     true_residuals = y_tr - oof_baseline
+    residual_mean = true_residuals.mean()
+    residual_std = true_residuals.std()
+    true_residuals_centered = true_residuals - residual_mean
     
-    # ---------- FINAL FIT ----------
     X_m_tr_s = scaler_m.fit_transform(X_m_tr)
     X_m_te_s = scaler_m.transform(X_m_te)
     
@@ -314,10 +418,11 @@ def run_residual_model(
         max_features="sqrt",
         random_state=42
     )
-    tree.fit(X_n_tr_s, true_residuals)
+    tree.fit(X_n_tr_s, true_residuals_centered)
     residual_pred = tree.predict(X_n_te_s)
     
-    # ---------- ALPHA CURVE ----------
+    from sklearn.metrics import precision_score, recall_score
+    
     alpha_rows = []
     for a in alpha_grid:
         combined = np.clip(baseline_probs + a * residual_pred, 0, 1)
@@ -326,14 +431,15 @@ def run_residual_model(
         alpha_rows.append({
             "alpha": float(a),
             "f1": f1_score(y_te, pred, zero_division=0),
-            "accuracy": accuracy_score(y_te, pred)
+            "accuracy": accuracy_score(y_te, pred),
+            "precision": precision_score(y_te, pred, zero_division=0),
+            "recall": recall_score(y_te, pred, zero_division=0)
         })
     
     alpha_df = pd.DataFrame(alpha_rows)
     best_row = alpha_df.loc[alpha_df["f1"].idxmax()]
     best_alpha = float(best_row["alpha"])
     
-    # ---------- FINAL SERIES ----------
     final_combined = np.clip(baseline_probs + best_alpha * residual_pred, 0, 1)
     
     series = pd.DataFrame({
@@ -359,20 +465,26 @@ def run_residual_model(
         metrics={
             "baseline": {
                 "f1": f1_score(y_te, (baseline_probs > 0.5).astype(int), zero_division=0),
-                "accuracy": accuracy_score(y_te, (baseline_probs > 0.5).astype(int))
+                "accuracy": accuracy_score(y_te, (baseline_probs > 0.5).astype(int)),
+                "precision": precision_score(y_te, (baseline_probs > 0.5).astype(int), zero_division=0),
+                "recall": recall_score(y_te, (baseline_probs > 0.5).astype(int), zero_division=0)
             },
             "hybrid": {
                 "f1": float(best_row["f1"]),
-                "accuracy": float(best_row["accuracy"])
+                "accuracy": float(best_row["accuracy"]),
+                "precision": float(best_row["precision"]),
+                "recall": float(best_row["recall"])
             }
         },
         series=series,
         feature_importance=importance,
         residual_stats={
-            "mean": float(true_residuals.mean()),
-            "std": float(true_residuals.std()),
-            "min": float(true_residuals.min()),
-            "max": float(true_residuals.max())
+            "mean": float(residual_pred.mean()),
+            "std": float(residual_pred.std()),
+            "min": float(residual_pred.min()),
+            "max": float(residual_pred.max()),
+            "raw_train_mean": float(residual_mean),
+            "raw_train_std": float(residual_std)
         },
         alpha_curve=alpha_df
     )
@@ -380,7 +492,6 @@ def run_residual_model(
 
 @st.cache_data(show_spinner=False)
 def train_model_cached(ticker: str, q_extreme: float) -> dict:
-    """Cached wrapper for model training. Returns dict for caching compatibility."""
     news = load_news_features()
     df = build_dataset(ticker, news)
     result = run_residual_model(df, ticker, q_extreme=q_extreme)
@@ -397,439 +508,477 @@ def train_model_cached(ticker: str, q_extreme: float) -> dict:
 
 
 # ============================================================================
-# VISUALIZATION HELPERS
+# CHARTS
 # ============================================================================
 
-def plot_alpha_curve(alpha_curve: pd.DataFrame, best_alpha: float) -> go.Figure:
-    """Plot F1 score across alpha values."""
+def plot_alpha_curve(alpha_curve: pd.DataFrame, best_alpha: float, show_metrics: list = None) -> go.Figure:
+    if show_metrics is None:
+        show_metrics = ["f1"]
+    
     fig = go.Figure()
     
-    fig.add_trace(go.Scatter(
-        x=alpha_curve["alpha"],
-        y=alpha_curve["f1"],
-        mode="lines+markers",
-        name="F1 Score",
-        line=dict(color="#1f77b4", width=2),
-        marker=dict(size=6)
-    ))
+    colors = {
+        "f1": ACCENT,
+        "accuracy": "#a78bfa",  # purple
+        "precision": "#f472b6",  # pink
+        "recall": "#fbbf24"  # amber
+    }
     
-    # Mark best alpha
-    best_f1 = alpha_curve.loc[alpha_curve["alpha"] == best_alpha, "f1"].values[0]
-    fig.add_trace(go.Scatter(
-        x=[best_alpha],
-        y=[best_f1],
-        mode="markers",
-        name=f"Best α = {best_alpha:.2f}",
-        marker=dict(color="#d62728", size=14, symbol="star")
-    ))
+    for metric in show_metrics:
+        if metric in alpha_curve.columns:
+            fig.add_trace(go.Scatter(
+                x=alpha_curve["alpha"],
+                y=alpha_curve[metric],
+                mode="lines",
+                name=metric,
+                line=dict(color=colors.get(metric, MUTED), width=1.5),
+                hovertemplate=f"α=%{{x:.2f}}<br>{metric}=%{{y:.3f}}<extra></extra>"
+            ))
     
-    # Baseline reference line
-    baseline_f1 = alpha_curve.loc[alpha_curve["alpha"] == 0, "f1"].values[0]
-    fig.add_hline(
-        y=baseline_f1,
-        line_dash="dash",
-        line_color="gray",
-        annotation_text=f"Baseline (α=0): {baseline_f1:.3f}"
-    )
+    # Mark best alpha point on F1 curve
+    if "f1" in show_metrics:
+        best_f1 = alpha_curve.loc[alpha_curve["alpha"].round(2) == round(best_alpha, 2), "f1"]
+        if len(best_f1) > 0:
+            fig.add_trace(go.Scatter(
+                x=[best_alpha],
+                y=[best_f1.values[0]],
+                mode="markers",
+                marker=dict(color=ACCENT, size=8),
+                hoverinfo="skip",
+                showlegend=False
+            ))
+    
+    # Baseline reference line for F1
+    if "f1" in show_metrics:
+        baseline_f1 = alpha_curve.loc[alpha_curve["alpha"] == 0, "f1"].values[0]
+        fig.add_hline(
+            y=baseline_f1,
+            line_dash="dot",
+            line_color=MUTED,
+            line_width=1,
+            annotation_text=f"baseline f1 {baseline_f1:.3f}",
+            annotation_position="right",
+            annotation_font_size=10,
+            annotation_font_color=MUTED
+        )
     
     fig.update_layout(
-        title="Alpha Curve: News Weight vs. Model Performance",
-        xaxis_title="α (News Residual Weight)",
-        yaxis_title="F1 Score",
-        template="plotly_white",
-        height=400,
-        showlegend=True,
-        legend=dict(yanchor="bottom", y=0.02, xanchor="right", x=0.98)
+        paper_bgcolor=BG,
+        plot_bgcolor=BG,
+        font=dict(family="IBM Plex Mono", color=MUTED, size=11),
+        margin=dict(l=50, r=30, t=40, b=40),
+        title=dict(text="alpha curve", font=dict(size=12, color=MUTED)),
+        xaxis_title="α",
+        yaxis_title="score",
+        height=350,
+        showlegend=len(show_metrics) > 1,
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.02,
+            xanchor="left",
+            x=0,
+            font=dict(size=10)
+        ),
+        xaxis=dict(gridcolor="#1f2329", zerolinecolor="#1f2329", tickfont=dict(size=10)),
+        yaxis=dict(gridcolor="#1f2329", zerolinecolor="#1f2329", tickfont=dict(size=10))
     )
     
     return fig
 
 
 def plot_feature_importance(importance_df: pd.DataFrame) -> go.Figure:
-    """Plot feature importance from the residual model."""
-    df = importance_df.head(10)  # Top 10
+    df = importance_df.head(8)
     
     fig = go.Figure(go.Bar(
         x=df["importance"],
         y=df["feature"],
         orientation="h",
-        marker_color="#2ca02c"
+        marker_color=ACCENT,
+        marker_line_width=0,
+        hovertemplate="%{y}<br>%{x:.3f}<extra></extra>"
     ))
     
     fig.update_layout(
-        title="Top News Features (Residual Model)",
-        xaxis_title="Importance",
+        paper_bgcolor=BG,
+        plot_bgcolor=BG,
+        font=dict(family="IBM Plex Mono", color=MUTED, size=11),
+        margin=dict(l=50, r=30, t=40, b=40),
+        title=dict(text="feature importance", font=dict(size=12, color=MUTED)),
+        xaxis_title="",
         yaxis_title="",
-        template="plotly_white",
-        height=400,
-        yaxis=dict(autorange="reversed")
+        height=350,
+        showlegend=False,
+        xaxis=dict(gridcolor="#1f2329", zerolinecolor="#1f2329", tickfont=dict(size=10)),
+        yaxis=dict(autorange="reversed", gridcolor="#1f2329", tickfont=dict(size=9))
     )
     
     return fig
 
 
 def plot_prediction_series(series_df: pd.DataFrame) -> go.Figure:
-    """Plot baseline vs hybrid predictions over time."""
     fig = make_subplots(
         rows=2, cols=1,
         shared_xaxes=True,
-        vertical_spacing=0.1,
-        row_heights=[0.7, 0.3],
-        subplot_titles=("Model Probabilities vs Actual", "News Residual Contribution")
+        vertical_spacing=0.08,
+        row_heights=[0.65, 0.35]
     )
     
-    # Probabilities
     fig.add_trace(go.Scatter(
         x=series_df["date"],
         y=series_df["baseline_prob"],
-        name="Baseline Prob",
-        line=dict(color="#1f77b4", width=1.5),
-        opacity=0.7
+        name="baseline",
+        line=dict(color=MUTED, width=1),
+        hovertemplate="%{y:.3f}<extra>baseline</extra>"
     ), row=1, col=1)
     
     fig.add_trace(go.Scatter(
         x=series_df["date"],
         y=series_df["combined_prob"],
-        name="Hybrid Prob",
-        line=dict(color="#2ca02c", width=1.5)
+        name="hybrid",
+        line=dict(color=ACCENT, width=1),
+        hovertemplate="%{y:.3f}<extra>hybrid</extra>"
     ), row=1, col=1)
     
-    # Actual extreme days
     extreme_dates = series_df[series_df["y_true"] == 1]["date"]
-    fig.add_trace(go.Scatter(
-        x=extreme_dates,
-        y=[1.05] * len(extreme_dates),
-        mode="markers",
-        name="Actual Extreme",
-        marker=dict(color="#d62728", size=6, symbol="triangle-down")
-    ), row=1, col=1)
+    if len(extreme_dates) > 0:
+        fig.add_trace(go.Scatter(
+            x=extreme_dates,
+            y=[1.02] * len(extreme_dates),
+            mode="markers",
+            marker=dict(color=RED, size=4, symbol="triangle-down"),
+            hovertemplate="%{x}<extra>extreme</extra>"
+        ), row=1, col=1)
     
-    # Residual contribution
+    colors = [ACCENT if r > 0 else MUTED for r in series_df["residual"]]
     fig.add_trace(go.Bar(
         x=series_df["date"],
         y=series_df["residual"],
-        name="News Residual",
-        marker_color=np.where(series_df["residual"] > 0, "#d62728", "#1f77b4"),
-        showlegend=False
+        marker_color=colors,
+        marker_line_width=0,
+        hovertemplate="%{y:.3f}<extra>residual</extra>"
     ), row=2, col=1)
     
     fig.update_layout(
-        template="plotly_white",
-        height=500,
-        showlegend=True,
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
+        paper_bgcolor=BG,
+        plot_bgcolor=BG,
+        font=dict(family="IBM Plex Mono", color=MUTED, size=11),
+        margin=dict(l=50, r=30, t=40, b=40),
+        height=420,
+        showlegend=False
     )
     
-    fig.update_yaxes(title_text="Probability", row=1, col=1)
-    fig.update_yaxes(title_text="Residual", row=2, col=1)
-    
-    return fig
-
-
-def plot_metrics_comparison(metrics: dict) -> go.Figure:
-    """Bar chart comparing baseline vs hybrid metrics."""
-    categories = ["F1 Score", "Accuracy"]
-    baseline_vals = [metrics["baseline"]["f1"], metrics["baseline"]["accuracy"]]
-    hybrid_vals = [metrics["hybrid"]["f1"], metrics["hybrid"]["accuracy"]]
-    
-    fig = go.Figure()
-    
-    fig.add_trace(go.Bar(
-        name="Baseline (Market Only)",
-        x=categories,
-        y=baseline_vals,
-        marker_color="#1f77b4"
-    ))
-    
-    fig.add_trace(go.Bar(
-        name="Hybrid (Market + News)",
-        x=categories,
-        y=hybrid_vals,
-        marker_color="#2ca02c"
-    ))
-    
-    fig.update_layout(
-        title="Model Performance Comparison",
-        barmode="group",
-        template="plotly_white",
-        height=350,
-        yaxis=dict(range=[0, 1]),
-        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1)
-    )
+    fig.update_xaxes(gridcolor="#1f2329", zerolinecolor="#1f2329", tickfont=dict(size=9))
+    fig.update_yaxes(gridcolor="#1f2329", zerolinecolor="#1f2329", tickfont=dict(size=9))
     
     return fig
 
 
 # ============================================================================
-# MAIN APP
+# COMPONENTS
+# ============================================================================
+
+def metric_card(label: str, value: str, delta: str = None):
+    delta_html = f'<div class="metric-delta">{delta}</div>' if delta else ""
+    st.markdown(f"""
+        <div class="metric-box">
+            <div class="metric-label">{label}</div>
+            <div class="metric-value">{value}</div>
+            {delta_html}
+        </div>
+    """, unsafe_allow_html=True)
+
+
+# ============================================================================
+# MAIN
 # ============================================================================
 
 def main():
-    # Header
-    st.title("📈 News & Volatility Dashboard")
-    st.markdown("""
-    **Exploring how news sentiment predicts extreme market volatility.**
+    st.markdown("# vol × news")
+    st.markdown(f"""
+    <p style="color: {MUTED}; font-size: 0.85rem; margin-bottom: 0.5rem;">
+    Predicting extreme volatility using news sentiment features. This dashboard accompanies a capstone project exploring whether semantic information from financial news improves volatility forecasting beyond market persistence.
+    <a href="https://docs.google.com/document/d/1d13AOZHMbSHORa-LI81_pXSDOy3eiwBfxVOXyzW3Y7w/edit?tab=t.cujvg6q004tp" style="color: {ACCENT};">Read the full report →</a>
+    </p>
+    """, unsafe_allow_html=True)
     
-    This dashboard implements a hybrid residual model that combines:
-    - **Baseline**: Logistic regression on market features (volatility persistence)
-    - **Residual**: Random forest on news features (captures nonlinear news effects)
+    st.markdown("<br>", unsafe_allow_html=True)
     
-    The key insight: news is most informative for *extreme* volatility, not routine fluctuations.
-    """)
+    # Controls
+    col1, col2, col3, col4 = st.columns([2, 2, 1, 1])
     
-    st.divider()
+    with col1:
+        ticker = st.text_input("ticker", value="SPY", label_visibility="collapsed", placeholder="ticker").upper().strip()
     
-    # Sidebar controls
-    with st.sidebar:
-        st.header("⚙️ Configuration")
-        
-        ticker = st.text_input(
-            "Ticker Symbol",
-            value="SPY",
-            help="Enter any valid Yahoo Finance ticker (e.g., SPY, AAPL, XLE, TSLA)"
-        ).upper().strip()
-        
+    with col2:
         percentile = st.select_slider(
-            "Volatility Percentile",
+            "percentile",
             options=[0.80, 0.85, 0.90, 0.95],
             value=0.90,
-            format_func=lambda x: f"{int(x*100)}th percentile",
-            help="Define 'extreme' volatility as days above this percentile"
+            format_func=lambda x: f"p{int(x*100)}",
+            label_visibility="collapsed"
         )
-        
-        run_button = st.button("🚀 Run Analysis", type="primary", use_container_width=True)
-        
-        st.divider()
-        
-        st.markdown("""
-        **Quick Picks:**
-        """)
-        
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("SPY", use_container_width=True):
-                st.session_state["quick_ticker"] = "SPY"
-                st.rerun()
-            if st.button("XLE", use_container_width=True):
-                st.session_state["quick_ticker"] = "XLE"
-                st.rerun()
-            if st.button("XLF", use_container_width=True):
-                st.session_state["quick_ticker"] = "XLF"
-                st.rerun()
-        with col2:
-            if st.button("AAPL", use_container_width=True):
-                st.session_state["quick_ticker"] = "AAPL"
-                st.rerun()
-            if st.button("TSLA", use_container_width=True):
-                st.session_state["quick_ticker"] = "TSLA"
-                st.rerun()
-            if st.button("XOM", use_container_width=True):
-                st.session_state["quick_ticker"] = "XOM"
-                st.rerun()
-        
-        st.divider()
-        
-        st.markdown("""
-        **About**
-        
-        Based on BEE3066 Term Project:  
-        *Information Arrival and Volatility Structures*
-        
-        [GitHub Repo](#) | [Full Report](#)
-        """)
     
-    # Handle quick picks
-    if "quick_ticker" in st.session_state:
-        ticker = st.session_state.pop("quick_ticker")
+    with col3:
+        run_button = st.button("run", use_container_width=True)
+    
+    with col4:
+        pass
+    
+    # Quick picks
+    st.markdown(f'<p style="color: {MUTED}; font-size: 0.75rem; margin-top: 0.5rem;">quick picks — or use any <a href="https://finance.yahoo.com/" style="color: {ACCENT};">yfinance</a> ticker</p>', unsafe_allow_html=True)
+    
+    qp_cols = st.columns(5)
+    quick_picks = [
+        ("XLF", "Financials"),
+        ("XLE", "Energy"),
+        ("XLK", "Tech"),
+        ("XLV", "Healthcare"),
+        ("XLU", "Utilities"),
+    ]
+    
+    for i, (sym, label) in enumerate(quick_picks):
+        with qp_cols[i]:
+            if st.button(f"{sym} ({label})", use_container_width=True, key=f"qp_{sym}"):
+                st.session_state["selected_ticker"] = sym
+                st.rerun()
+    
+    # Check for quick pick selection
+    if "selected_ticker" in st.session_state:
+        ticker = st.session_state.pop("selected_ticker")
         run_button = True
     
-    # Main content
+    # Explain controls
+    with st.expander("what do these controls mean?"):
+        st.markdown(f"""
+        **Ticker**: Any valid Yahoo Finance symbol (e.g., SPY, AAPL, XLE, TSLA, SHEL.L)
+        
+        **Percentile (p80-p95)**: Defines what counts as "extreme" volatility. 
+        - p90 means we're predicting whether tomorrow's volatility will be in the top 10% of historical values
+        - Higher percentiles = rarer, more extreme events
+        - Lower percentiles = more frequent "elevated" volatility days
+        
+        The model uses an expanding window, so the threshold updates as new data arrives (no look-ahead bias).
+        """)
+    
+    st.markdown("<br>", unsafe_allow_html=True)
+    
+    # Run model or use cached result
     if run_button and ticker:
-        with st.spinner(f"Fetching data and training model for {ticker}..."):
+        with st.spinner(""):
             try:
                 result = train_model_cached(ticker, percentile)
-                
-                # Convert back to dataframes
-                series_df = pd.DataFrame(result["series"])
-                importance_df = pd.DataFrame(result["feature_importance"])
-                alpha_curve_df = pd.DataFrame(result["alpha_curve"])
-                
+                st.session_state["last_result"] = result
+                st.session_state["last_ticker"] = ticker
+                st.session_state["last_percentile"] = percentile
             except ValueError as e:
-                st.error(f"❌ Error: {str(e)}")
-                st.info("Make sure you entered a valid Yahoo Finance ticker symbol.")
+                st.error(f"invalid ticker: {ticker}")
                 return
             except Exception as e:
-                st.error(f"❌ Unexpected error: {str(e)}")
+                st.error(f"error: {str(e)}")
                 return
+    
+    # Display results if we have them
+    if "last_result" in st.session_state:
+        result = st.session_state["last_result"]
+        ticker = st.session_state["last_ticker"]
+        percentile = st.session_state["last_percentile"]
         
-        # Success message
-        st.success(f"✅ Analysis complete for **{ticker}**")
+        series_df = pd.DataFrame(result["series"])
+        importance_df = pd.DataFrame(result["feature_importance"])
+        alpha_curve_df = pd.DataFrame(result["alpha_curve"])
         
-        # Key metrics row
-        st.subheader("📊 Key Results")
+        baseline_f1 = result["metrics"]["baseline"]["f1"]
+        hybrid_f1 = result["metrics"]["hybrid"]["f1"]
+        delta_f1 = hybrid_f1 - baseline_f1
+        pct_uplift = (delta_f1 / baseline_f1 * 100) if baseline_f1 > 0 else 0
         
+        # Metrics
         col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            st.metric(
-                "Best α",
-                f"{result['best_alpha']:.2f}",
-                help="Optimal weight for news residual"
-            )
-        
+            metric_card("alpha", f"{result['best_alpha']:.2f}")
         with col2:
-            baseline_f1 = result["metrics"]["baseline"]["f1"]
-            hybrid_f1 = result["metrics"]["hybrid"]["f1"]
-            delta = hybrid_f1 - baseline_f1
-            st.metric(
-                "Hybrid F1",
-                f"{hybrid_f1:.3f}",
-                delta=f"{delta:+.3f} vs baseline",
-                delta_color="normal"
-            )
-        
+            metric_card("baseline f1", f"{baseline_f1:.3f}")
         with col3:
-            st.metric(
-                "Baseline F1",
-                f"{baseline_f1:.3f}",
-                help="Market-only model performance"
-            )
-        
+            metric_card("hybrid f1", f"{hybrid_f1:.3f}", f"+{delta_f1:.3f}" if delta_f1 > 0 else f"{delta_f1:.3f}")
         with col4:
-            news_uplift = (hybrid_f1 - baseline_f1) / baseline_f1 * 100 if baseline_f1 > 0 else 0
-            st.metric(
-                "News Uplift",
-                f"{news_uplift:+.1f}%",
-                help="Relative improvement from adding news"
-            )
+            metric_card("samples", f"{len(series_df)}")
         
-        st.divider()
+        st.markdown("<br>", unsafe_allow_html=True)
         
-        # Charts
-        tab1, tab2, tab3, tab4 = st.tabs([
-            "📈 Alpha Curve",
-            "🎯 Feature Importance", 
-            "📉 Time Series",
-            "📋 Raw Data"
-        ])
+        # Tabs
+        tab1, tab2, tab3 = st.tabs(["alpha", "features", "series"])
         
         with tab1:
-            st.plotly_chart(
-                plot_alpha_curve(alpha_curve_df, result["best_alpha"]),
-                use_container_width=True
-            )
+            # Metric toggles
+            st.markdown(f'<p style="color: {MUTED}; font-size: 0.75rem;">show metrics:</p>', unsafe_allow_html=True)
+            tog_cols = st.columns(4)
+            with tog_cols[0]:
+                show_f1 = st.checkbox("f1", value=True, key="show_f1")
+            with tog_cols[1]:
+                show_acc = st.checkbox("accuracy", value=False, key="show_acc")
+            with tog_cols[2]:
+                show_prec = st.checkbox("precision", value=False, key="show_prec")
+            with tog_cols[3]:
+                show_rec = st.checkbox("recall", value=False, key="show_rec")
             
-            st.markdown("""
-            **Interpretation:** The alpha curve shows how model performance changes as we 
-            increase the weight on news-derived signals. α=0 is the pure market baseline; 
-            higher α values incorporate more news information. The optimal α indicates 
-            how much news contributes to volatility prediction for this asset.
-            """)
+            show_metrics = []
+            if show_f1:
+                show_metrics.append("f1")
+            if show_acc:
+                show_metrics.append("accuracy")
+            if show_prec:
+                show_metrics.append("precision")
+            if show_rec:
+                show_metrics.append("recall")
+            
+            if not show_metrics:
+                show_metrics = ["f1"]
+            
+            st.plotly_chart(plot_alpha_curve(alpha_curve_df, result["best_alpha"], show_metrics), use_container_width=True)
+            with st.expander("info"):
+                st.markdown(f"""
+                **What is the alpha curve?**
+                
+                This shows how model performance changes as we vary the weight on news-derived signals.
+                
+                - **α = 0**: Pure baseline — only uses lagged volatility and returns (market features)
+                - **α = 1**: Full news weight — baseline prediction plus the full news residual adjustment
+                - **Optimal α = {result['best_alpha']:.2f}**: The weight that maximises F1 on the out-of-sample test set
+                
+                **Metrics explained:**
+                - **F1**: Harmonic mean of precision and recall — balances both
+                - **Accuracy**: % of days correctly classified (can be misleading with imbalanced classes)
+                - **Precision**: When we predict extreme vol, how often are we right?
+                - **Recall**: Of all actual extreme vol days, how many did we catch?
+                
+                The dotted line shows baseline F1 performance (α=0) for reference.
+                """)
         
         with tab2:
-            col1, col2 = st.columns([2, 1])
-            
-            with col1:
-                st.plotly_chart(
-                    plot_feature_importance(importance_df),
-                    use_container_width=True
-                )
-            
-            with col2:
-                st.markdown("**Top Features:**")
-                for _, row in importance_df.head(5).iterrows():
-                    st.markdown(f"- `{row['feature']}`: {row['importance']:.3f}")
-                
+            st.plotly_chart(plot_feature_importance(importance_df), use_container_width=True)
+            with st.expander("info"):
                 st.markdown("""
-                ---
-                **Feature Types:**
-                - `*_sentiment_intensity`: Magnitude of news coverage
-                - `primary_burst`: Attention × Intensity interaction
-                - `u_shape_regime`: Market state indicator
+                **What are these features?**
+                
+                These are the news-derived features used by the Random Forest to predict the residual (the part the baseline misses).
+                
+                - **sentiment_intensity**: How strongly positive/negative the news coverage is for a given theme (markets, macro, energy, tech, etc.)
+                - **primary_burst**: Interaction of markets/macro sentiment intensity with attention share — captures "big news days"
+                - **dominance_burst**: Same concept for geopolitics/trade themes
+                - **u_shape_regime**: Indicator for whether sentiment is in an extreme state (very high or very low)
+                - **_lag1, _lag3**: Lagged versions (1-day and 3-day) to capture delayed effects
+                
+                **Importance**: Higher values mean the feature contributes more to the residual model's predictions. This tells you which news themes matter most for this asset's volatility.
                 """)
         
         with tab3:
-            st.plotly_chart(
-                plot_prediction_series(series_df),
-                use_container_width=True
-            )
-            
-            st.markdown("""
-            **Reading the chart:** 
-            - Blue line = baseline probability (market features only)
-            - Green line = hybrid probability (market + news)
-            - Red triangles = actual extreme volatility days
-            - Bottom panel = news residual contribution (positive = news predicts higher vol)
-            """)
+            st.plotly_chart(plot_prediction_series(series_df), use_container_width=True)
+            with st.expander("info"):
+                st.markdown("""
+                **Top panel: Probability predictions**
+                - **Grey line**: Baseline probability of extreme volatility (market features only)
+                - **Teal line**: Hybrid probability (baseline + α × news residual)
+                - **Red triangles**: Days where extreme volatility actually occurred
+                
+                **Bottom panel: News residual contribution**
+                - **Teal bars (positive)**: News signals suggest *higher* volatility than the baseline expects
+                - **Grey bars (negative)**: News signals suggest *lower* volatility than the baseline expects
+                
+                **Why are residuals mostly negative?**
+                
+                The baseline model uses lagged volatility, which captures volatility clustering (high vol tends to follow high vol). However, when there's active news coverage, information gets incorporated into prices faster, meaning yesterday's volatility becomes less predictive of today's.
+                
+                The negative residuals represent the news model learning: "when news flow is active, the autoregressive baseline's persistence assumption is too strong — volatility mean-reverts faster than the baseline expects."
+                
+                The *variation* in residual magnitude is the signal. Days with less negative residuals (or positive ones) are when news suggests the baseline might be *underestimating* risk.
+                """)
         
-        with tab4:
-            st.markdown("**Model Metrics:**")
-            st.json(result["metrics"])
-            
-            st.markdown("**Residual Statistics:**")
-            st.json(result["residual_stats"])
-            
-            st.markdown("**Alpha Curve Data:**")
-            st.dataframe(alpha_curve_df, use_container_width=True)
-            
-            st.markdown("**Prediction Series (last 20 rows):**")
-            st.dataframe(series_df.tail(20), use_container_width=True)
+        # Interpretation section - after charts but before residual stats
+        st.markdown("<br>", unsafe_allow_html=True)
         
-        # Interpretation box
-        st.divider()
-        
-        with st.expander("🔍 **Interpretation Guide**", expanded=False):
+        with st.expander("interpretation", expanded=True):
+            # Determine sensitivity level
+            if result['best_alpha'] > 0.7:
+                sensitivity = "highly"
+                sensitivity_detail = "News features provide substantial predictive information beyond what market persistence alone captures."
+            elif result['best_alpha'] > 0.3:
+                sensitivity = "moderately"
+                sensitivity_detail = "News adds meaningful signal, but market dynamics remain the primary driver."
+            else:
+                sensitivity = "minimally"
+                sensitivity_detail = "Volatility for this asset is primarily driven by autoregressive persistence; news adds limited incremental value."
+            
+            # Determine uplift interpretation
+            if pct_uplift > 10:
+                uplift_interp = "substantial improvement"
+            elif pct_uplift > 0:
+                uplift_interp = "modest improvement"
+            else:
+                uplift_interp = "no improvement"
+            
+            # Precision/recall interpretation
+            baseline_prec = result["metrics"]["baseline"]["precision"]
+            hybrid_prec = result["metrics"]["hybrid"]["precision"]
+            baseline_rec = result["metrics"]["baseline"]["recall"]
+            hybrid_rec = result["metrics"]["hybrid"]["recall"]
+            
+            prec_delta = hybrid_prec - baseline_prec
+            rec_delta = hybrid_rec - baseline_rec
+            
             st.markdown(f"""
-            ### Results for {ticker}
+            ### {ticker} at p{int(percentile*100)}
             
-            **What the numbers mean:**
+            **News sensitivity**
             
-            - **Best α = {result['best_alpha']:.2f}**: This asset's volatility is 
-              {'highly' if result['best_alpha'] > 0.5 else 'moderately' if result['best_alpha'] > 0.2 else 'minimally'} 
-              sensitive to news signals. {'News provides substantial information beyond market persistence.' if result['best_alpha'] > 0.5 else 'Market dynamics dominate, but news adds some value.' if result['best_alpha'] > 0.2 else 'Volatility is primarily driven by market persistence.'}
+            Optimal α = **{result['best_alpha']:.2f}** — this asset is **{sensitivity}** sensitive to news signals. {sensitivity_detail}
             
-            - **F1 Uplift = {news_uplift:+.1f}%**: Adding news features 
-              {'substantially improves' if news_uplift > 10 else 'modestly improves' if news_uplift > 0 else 'does not improve'} 
-              the model's ability to identify extreme volatility days.
+            **Performance comparison**
             
-            **Sector context:**
+            |  | Baseline | Hybrid | Δ |
+            |--|----------|--------|---|
+            | F1 | {baseline_f1:.3f} | {hybrid_f1:.3f} | {delta_f1:+.3f} |
+            | Precision | {baseline_prec:.3f} | {hybrid_prec:.3f} | {prec_delta:+.3f} |
+            | Recall | {baseline_rec:.3f} | {hybrid_rec:.3f} | {rec_delta:+.3f} |
             
-            Based on the research, different sectors respond differently to news:
-            - **Energy (XLE, XOM)**: High news sensitivity - supply shocks, geopolitics
-            - **Financials (XLF, JPM)**: Moderate - policy, macro conditions  
-            - **Tech (XLK, AAPL)**: Mixed - earnings, regulation, innovation cycles
-            - **Utilities (XLU)**: Low - structural, regulated cash flows
+            Adding news features provides **{uplift_interp}** ({pct_uplift:+.1f}% F1 uplift) in identifying extreme volatility days.
+            
+            **What this means**
+            
+            The hybrid model combines a baseline that captures volatility persistence (yesterday's vol predicts today's) with a news-based residual that adjusts this prediction. The α parameter controls how much weight to give the news signal — higher α means news is more informative for this asset.
             """)
+        
+        with st.expander("residual stats"):
+            st.code(f"""test mean:  {result['residual_stats']['mean']:.4f}
+test std:   {result['residual_stats']['std']:.4f}
+train bias: {result['residual_stats']['raw_train_mean']:.4f}""")
     
     else:
         # Default state
-        st.info("👈 Enter a ticker and click **Run Analysis** to get started.")
+        st.markdown(f"""
+        <div style="color: {MUTED}; font-size: 0.8rem; margin-top: 2rem;">
+        Enter a ticker symbol and click run to analyse.
+        </div>
+        """, unsafe_allow_html=True)
         
-        # Show example results or explanation
-        with st.expander("ℹ️ **How it works**", expanded=True):
+        with st.expander("how does this work?"):
             st.markdown("""
-            ### The Hybrid Residual Model
+            **The problem**: Volatility is highly persistent — yesterday's volatility strongly predicts today's. Simple autoregressive models capture this well, but they miss information contained in news.
             
-            **Problem:** Volatility is highly persistent - yesterday's volatility strongly predicts today's. 
-            Linear models capture this well, but miss the nonlinear effects of news.
+            **The approach**: A two-stage hybrid model:
             
-            **Solution:** A two-stage approach:
+            1. **Baseline model** (Logistic Regression): Predicts extreme volatility using only market features — lagged volatility, lagged returns. This captures the persistent, autoregressive structure.
             
-            1. **Baseline Model** (Logistic Regression)
-               - Uses only market features: lagged volatility, returns
-               - Captures the persistent, autoregressive structure
-               
-            2. **Residual Model** (Random Forest)
-               - Trained on what the baseline *misses*
-               - Uses news features: sentiment intensity, attention, regime indicators
-               - Captures nonlinear, threshold-driven news effects
+            2. **Residual model** (Random Forest): Trained on what the baseline *misses* — the residuals. Uses news features: sentiment intensity across themes (markets, macro, energy, tech, geopolitics, trade), attention bursts, and regime indicators.
             
-            3. **Combined Prediction**
-               - `P(extreme) = baseline_prob + α × residual_pred`
-               - α is tuned to find optimal news weight
+            3. **Combined prediction**: `P(extreme) = baseline + α × residual`
             
-            **Key Finding:** News is most predictive for *extreme* volatility events, 
-            not routine fluctuations. The effect varies significantly across sectors.
+            The α parameter is tuned on a validation set to find the optimal weight for news information.
+            
+            **Key finding**: News doesn't predict volatility directly. Instead, it modulates how much to trust the baseline's persistence-based forecast. When news is active, information gets priced in faster, and the baseline's "yesterday predicts today" assumption becomes less reliable.
+            
+            **Data**: News features are derived from ~2 million financial news articles (2016-2024), clustered into 7 thematic categories using sentence embeddings.
             """)
 
 
